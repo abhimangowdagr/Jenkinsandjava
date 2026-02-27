@@ -2,11 +2,10 @@ pipeline {
     agent { label 'Java_Agent1' }
 
     environment {
-        // UPDATED: Based on your screenshot
-        AWS_REGION = 'ap-south-1' 
-        ECR_REPO_URI = '://966376172086.dkr.ecr.ap-south-1.amazonaws.com'
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
-        IMAGE_URI = "${ECR_REPO_URI}:${IMAGE_TAG}"
+        AWS_REGION = 'us-east-1'
+        ECR_PUBLIC_REPO_URI = 'public.ecr.aws/q0e7m1l2/test-project'
+        IMAGE_TAG = 'latest'
+        IMAGE_URI = "${ECR_PUBLIC_REPO_URI}:${IMAGE_TAG}"
     }
 
     stages {
@@ -18,37 +17,48 @@ pipeline {
 
         stage('Build Java App') {
             steps {
-                sh 'mvn clean -B -Denforcer.skip=true package'
+                sh '''
+                    echo "Building Java application..."
+                    mvn clean -B -Denforcer.skip=true package
+                '''
             }
         }
 
-        stage('Login to AWS ECR') {
+        stage('Login to AWS ECR Public') {
             steps {
-                // Ensure 'aws-creds' exists in Jenkins -> Credentials
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-creds'
                 ]]) {
                     sh '''
-                        echo "Logging in to Private ECR in Mumbai region..."
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin 966376172086.dkr.ecr.ap-south-1.amazonaws.com
+                        echo "Configuring AWS CLI..."
+                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                        aws configure set region ${AWS_REGION}
+
+                        echo "Logging in to ECR Public..."
+                        aws ecr-public get-login-password --region us-east-1 \
+                        | docker login --username AWS --password-stdin public.ecr.aws
                     '''
                 }
             }
         }
 
-        stage('Build & Tag Docker Image') {
+        stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${IMAGE_URI} ."
-                sh "docker tag ${IMAGE_URI} ${ECR_REPO_URI}:latest"
+                sh '''
+                    echo "Building Docker image..."
+                    docker build -t ${IMAGE_URI} .
+                '''
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                sh "docker push ${IMAGE_URI}"
-                sh "docker push ${ECR_REPO_URI}:latest"
+                sh '''
+                    echo "Pushing Docker image to ECR Public..."
+                    docker push ${IMAGE_URI}
+                '''
             }
         }
     }
@@ -58,7 +68,7 @@ pipeline {
             echo "✅ Image pushed successfully: ${IMAGE_URI}"
         }
         failure {
-            echo "❌ Pipeline failed. Check logs."
+            echo "❌ Pipeline failed. Check logs above."
         }
     }
 }
