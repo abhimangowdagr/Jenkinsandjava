@@ -1,54 +1,47 @@
 pipeline {
-    agent { label 'Java_Agent1' }
+    agent { label 'java-agent' }
 
     environment {
-        AWS_REGION = 'us-east-1'
-        ECR_PUBLIC_REPO_URI = 'public.ecr.aws/q0e7m1l2/test-project'
+        GIT_REPO = 'https://github.com/abhimangowdagr/Jenkinsandjava.git'
+        AWS_REGION = 'ap-south-1'
+        ECR_PUBLIC_REPO_URI = 'public.ecr.aws/q0e7m1l2/jenkinsecr'
         IMAGE_TAG = 'latest'
         IMAGE_URI = "${ECR_PUBLIC_REPO_URI}:${IMAGE_TAG}"
+        EKS_CLUSTER = 'my-eks-cluster'
     }
 
     stages {
-        stage('Checkout') {
+
+        stage('Clone Repository') {
             steps {
-                checkout scm
+                git url: "${GIT_REPO}", branch: 'main'
             }
         }
 
-        stage('Build Java App') {
+        stage('Build Application') {
             steps {
                 sh '''
-                    echo "Building Java application..."
-                    mvn clean -B -Denforcer.skip=true package
+                echo "Building Java application..."
+                mvn clean package
                 '''
-            }
-        }
-
-        stage('Login to AWS ECR Public') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds'
-                ]]) {
-                    sh '''
-                        echo "Configuring AWS CLI..."
-                        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-                        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-                        aws configure set region ${AWS_REGION}
-
-                        echo "Logging in to ECR Public..."
-                        aws ecr-public get-login-password --region us-east-1 \
-                        | docker login --username AWS --password-stdin public.ecr.aws
-                    '''
-                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    echo "Building Docker image..."
-                    docker build -t ${IMAGE_URI} .
+                echo "Building Docker image..."
+                docker build -t ${IMAGE_URI} .
+                '''
+            }
+        }
+
+        stage('Login to AWS ECR') {
+            steps {
+                sh '''
+                echo "Logging into AWS ECR..."
+                aws ecr-public get-login-password --region us-east-1 \
+                | docker login --username AWS --password-stdin public.ecr.aws
                 '''
             }
         }
@@ -56,8 +49,30 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 sh '''
-                    echo "Pushing Docker image to ECR Public..."
-                    docker push ${IMAGE_URI}
+                echo "Pushing Docker image..."
+                docker push ${IMAGE_URI}
+                '''
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                sh '''
+                echo "Updating kubeconfig..."
+                aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
+
+                echo "Deploying application..."
+                kubectl apply -f deploymentjava.yaml
+                kubectl apply -f servicelb.yaml
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                kubectl get pods
+                kubectl get svc
                 '''
             }
         }
@@ -65,10 +80,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Image pushed successfully: ${IMAGE_URI}"
+            echo "🚀 Deployment Successful!"
         }
         failure {
-            echo "❌ Pipeline failed. Check logs above."
+            echo "❌ Pipeline Failed!"
         }
     }
 }
